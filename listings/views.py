@@ -9,7 +9,16 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
 
-from .models import ChatMessage, ChatThread, Contract, ContractStatus, Favorite, Listing, ListingStatus
+from .models import (
+    ChatMessage,
+    ChatThread,
+    Contract,
+    ContractStatus,
+    DocsState,
+    Favorite,
+    Listing,
+    ListingStatus,
+)
 from .pdf import render_contract_pdf
 from .serializers import (
     ChatMessageSerializer,
@@ -247,11 +256,46 @@ def my_chats_view(request):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def create_contract_view(request, pk):
-    listing = Listing.objects.filter(pk=pk).first()
+    """Shartnoma so'rovi. Bu yerda "uy oldi-berdi" tekshiruvining asosiy qismi bajariladi.
+
+    Shartlar (docx 2.2-band, "Onlayn shartnoma" + "Verifikatsiya"):
+      1. E'lon mavjud va o'zinikiga shartnoma tuzilmaydi;
+      2. E'lon FAOL holatda (moderatsiyadan o'tgan, rad etilmagan, sotilmagan);
+      3. E'lon hujjatlari tayyor;
+      4. Xaridor ham, sotuvchi ham myID/SMS orqali tasdiqlangan;
+      5. Shu e'lon bo'yicha ochiq shartnoma allaqachon mavjud emas.
+    """
+    listing = Listing.objects.select_related('owner').filter(pk=pk).first()
     if not listing:
         return Response({'error': 'not_found'}, status=status.HTTP_404_NOT_FOUND)
-    if listing.owner_id == request.user.id:
-        return Response({'error': "o'z e'loningizga shartnoma tuza olmaysiz"}, status=status.HTTP_400_BAD_REQUEST)
+
+    buyer = request.user
+    if listing.owner_id == buyer.id:
+        return Response({'error': 'own_listing'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if listing.status != ListingStatus.ACTIVE:
+        code = 'listing_dealt' if listing.status == ListingStatus.DEALT else 'listing_not_active'
+        return Response({'error': code}, status=status.HTTP_400_BAD_REQUEST)
+
+    if listing.docs != DocsState.READY:
+        return Response({'error': 'docs_not_ready'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if not buyer.verified:
+        return Response({'error': 'buyer_not_verified'}, status=status.HTTP_403_FORBIDDEN)
+    if not listing.owner.verified:
+        return Response({'error': 'seller_not_verified'}, status=status.HTTP_400_BAD_REQUEST)
+
+    existing = Contract.objects.filter(
+        listing=listing, status__in=[ContractStatus.DRAFT, ContractStatus.AWAITING_SIGN]
+    ).first()
+    if existing:
+        if existing.buyer_id == buyer.id:
+            # O'zining ochiq shartnomasi — yangisini yaratmay, borini qaytaramiz.
+            return Response(ContractSerializer(existing, context={'request': request}).data)
+        return Response({'error': 'contract_in_progress'}, status=status.HTTP_409_CONFLICT)
+
+    if Contract.objects.filter(listing=listing, status=ContractStatus.SIGNED).exists():
+        return Response({'error': 'listing_dealt'}, status=status.HTTP_400_BAD_REQUEST)
 
     from platform_admin.models import PlatformSettings
     settings_row = PlatformSettings.load()
@@ -259,26 +303,116 @@ def create_contract_view(request, pk):
     contract = Contract.objects.create(
         listing=listing,
         seller=listing.owner,
-        buyer=request.user,
+        buyer=buyer,
         agent=listing.agent,
         deal=listing.deal,
         price=listing.price,
         currency=listing.currency,
         service_fee=settings_row.contract_price,
+        status=ContractStatus.DRAFT,
     )
-    return Response(ContractSerializer(contract, context={'request': request}).data, status=status.HTTP_201_CREATED)
+    return Response(
+        ContractSerializer(contract, context={'request': request}).data, status=status.HTTP_201_CREATED
+    )
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def approve_contract_view(request, pk):
+    """Sotuvchi roziligi — shartnoma imzolashga faqat shundan keyin ochiladi."""
+    contract = Contract.objects.filter(pk=pk).select_related('listing', 'seller', 'buyer').first()
+    if not contract:
+        return Response({'error': 'not_found'}, status=status.HTTP_404_NOT_FOUND)
+    if contract.seller_id != request.user.id:
+        return Response({'error': 'only_seller'}, status=status.HTTP_403_FORBIDDEN)
+    if contract.status == ContractStatus.CANCELLED:
+        return Response({'error': 'contract_cancelled'}, status=status.HTTP_400_BAD_REQUEST)
+    if contract.status != ContractStatus.DRAFT:
+        return Response(ContractSerializer(contract, context={'request': request}).data)
+
+    contract.seller_signed = True
+    contract.seller_approved_at = timezone.now()
+    contract.status = ContractStatus.AWAITING_SIGN
+    contract.save(update_fields=['seller_signed', 'seller_approved_at', 'status'])
+    return Response(ContractSerializer(contract, context={'request': request}).data)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def cancel_contract_view(request, pk):
+    """Ikkala tomon ham bekor qila oladi (imzolangandan keyin — yo'q)."""
+    contract = Contract.objects.filter(pk=pk).select_related('listing').first()
+    if not contract:
+        return Response({'error': 'not_found'}, status=status.HTTP_404_NOT_FOUND)
+    if request.user.id not in (contract.seller_id, contract.buyer_id):
+        return Response({'error': 'forbidden'}, status=status.HTTP_403_FORBIDDEN)
+    if contract.status == ContractStatus.SIGNED:
+        return Response({'error': 'already_signed'}, status=status.HTTP_400_BAD_REQUEST)
+
+    contract.status = ContractStatus.CANCELLED
+    contract.cancelled_by = request.user
+    contract.cancel_reason = str(request.data.get('reason', ''))[:200]
+    contract.save(update_fields=['status', 'cancelled_by', 'cancel_reason'])
+    return Response(ContractSerializer(contract, context={'request': request}).data)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def sign_request_view(request, pk):
+    """Imzolash uchun xaridor telefoniga bir martalik kod yuboradi."""
+    from accounts.models import OTPPurpose
+    from accounts.views import OTP_TTL_SECONDS, issue_otp
+
+    contract = Contract.objects.filter(pk=pk).first()
+    if not contract:
+        return Response({'error': 'not_found'}, status=status.HTTP_404_NOT_FOUND)
+    if contract.buyer_id != request.user.id:
+        return Response({'error': 'only_buyer'}, status=status.HTTP_403_FORBIDDEN)
+    if contract.status == ContractStatus.SIGNED:
+        return Response({'error': 'already_signed'}, status=status.HTTP_400_BAD_REQUEST)
+    if contract.status == ContractStatus.CANCELLED:
+        return Response({'error': 'contract_cancelled'}, status=status.HTTP_400_BAD_REQUEST)
+    if not contract.seller_signed:
+        return Response({'error': 'seller_not_approved'}, status=status.HTTP_400_BAD_REQUEST)
+
+    otp, cooldown = issue_otp(request.user.phone, OTPPurpose.CONTRACT, reference=contract.id)
+    if otp is None:
+        return Response(
+            {'error': 'too_soon', 'retryAfterSec': cooldown}, status=status.HTTP_429_TOO_MANY_REQUESTS
+        )
+    return Response({
+        'ok': True, 'phone': request.user.phone, 'demoCode': otp.code, 'expiresInSec': OTP_TTL_SECONDS,
+    })
 
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def sign_contract_view(request, pk):
+    """Imzolash — faqat to'g'ri SMS-kod bilan va faqat sotuvchi roziligidan keyin."""
+    from accounts.models import OTPPurpose
+    from accounts.views import check_otp
+
     contract = Contract.objects.filter(pk=pk).select_related('listing', 'seller', 'buyer').first()
     if not contract:
         return Response({'error': 'not_found'}, status=status.HTTP_404_NOT_FOUND)
     if contract.buyer_id != request.user.id:
-        return Response({'error': 'forbidden'}, status=status.HTTP_403_FORBIDDEN)
+        return Response({'error': 'only_buyer'}, status=status.HTTP_403_FORBIDDEN)
     if contract.status == ContractStatus.SIGNED:
         return Response(ContractSerializer(contract, context={'request': request}).data)
+    if contract.status == ContractStatus.CANCELLED:
+        return Response({'error': 'contract_cancelled'}, status=status.HTTP_400_BAD_REQUEST)
+    if not contract.seller_signed:
+        return Response({'error': 'seller_not_approved'}, status=status.HTTP_400_BAD_REQUEST)
+    if not request.user.verified:
+        return Response({'error': 'buyer_not_verified'}, status=status.HTTP_403_FORBIDDEN)
+
+    code = request.data.get('code')
+    if not code:
+        return Response({'error': 'code_required'}, status=status.HTTP_400_BAD_REQUEST)
+
+    ok, error = check_otp(request.user.phone, code, OTPPurpose.CONTRACT, reference=contract.id)
+    if not ok:
+        return Response({'error': error}, status=status.HTTP_400_BAD_REQUEST)
 
     contract.buyer_signed = True
     contract.status = ContractStatus.SIGNED
@@ -288,6 +422,11 @@ def sign_contract_view(request, pk):
 
     contract.listing.status = ListingStatus.DEALT
     contract.listing.save(update_fields=['status'])
+
+    # Shu e'lon bo'yicha boshqa ochiq so'rovlar avtomatik bekor qilinadi.
+    Contract.objects.filter(
+        listing=contract.listing, status__in=[ContractStatus.DRAFT, ContractStatus.AWAITING_SIGN]
+    ).exclude(pk=contract.pk).update(status=ContractStatus.CANCELLED, cancel_reason='Boshqa xaridor bilan bitim yopildi')
 
     if contract.agent_id:
         _sync_crm_deal(contract)

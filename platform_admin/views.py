@@ -26,6 +26,9 @@ class AdminUserViewSet(viewsets.ModelViewSet):
     """/api/admin/users — istalgan roldagi (user/agent) akkauntlarni boshqaradi."""
 
     permission_classes = [IsAdminRole]
+    # Admin panel jadvallari to'liq ro'yxat bilan ishlaydi (filtr/qidiruv brauzer tomonida),
+    # shuning uchun bu yerda sahifalash o'chirilgan.
+    pagination_class = None
     serializer_class = AdminUserRowSerializer
     queryset = User.objects.filter(role__in=[Role.USER, Role.AGENT]).order_by('-date_joined')
 
@@ -66,6 +69,9 @@ class AdminAgentViewSet(viewsets.ModelViewSet):
     """/api/admin/agents — Uyimiz Agent sertifikatlash va nazorat (docx 5-band)."""
 
     permission_classes = [IsAdminRole]
+    # Admin panel jadvallari to'liq ro'yxat bilan ishlaydi (filtr/qidiruv brauzer tomonida),
+    # shuning uchun bu yerda sahifalash o'chirilgan.
+    pagination_class = None
     serializer_class = AdminAgentRowSerializer
     queryset = User.objects.filter(role=Role.AGENT).order_by('-rating')
 
@@ -107,6 +113,9 @@ class AdminListingViewSet(viewsets.ModelViewSet):
     """/api/admin/posts — barcha e'lonlar ustidan to'liq nazorat."""
 
     permission_classes = [IsAdminRole]
+    # Admin panel jadvallari to'liq ro'yxat bilan ishlaydi (filtr/qidiruv brauzer tomonida),
+    # shuning uchun bu yerda sahifalash o'chirilgan.
+    pagination_class = None
     serializer_class = AdminListingRowSerializer
     queryset = Listing.objects.select_related('owner').order_by('-created_at')
 
@@ -154,6 +163,9 @@ class ModerationViewSet(viewsets.ModelViewSet):
     """/api/admin/moderation — AI-shubhali e'lonlar navbati (docx 3-bosqich)."""
 
     permission_classes = [IsAdminRole]
+    # Admin panel jadvallari to'liq ro'yxat bilan ishlaydi (filtr/qidiruv brauzer tomonida),
+    # shuning uchun bu yerda sahifalash o'chirilgan.
+    pagination_class = None
     serializer_class = ModerationItemSerializer
     queryset = ModerationItem.objects.select_related('listing').order_by('-created_at')
 
@@ -181,6 +193,9 @@ class TariffViewSet(viewsets.ModelViewSet):
     """/api/admin/tariffs — Premium/VIP/shartnoma/agent obunasi narxlari (docx 4-band)."""
 
     permission_classes = [IsAdminRole]
+    # Admin panel jadvallari to'liq ro'yxat bilan ishlaydi (filtr/qidiruv brauzer tomonida),
+    # shuning uchun bu yerda sahifalash o'chirilgan.
+    pagination_class = None
     serializer_class = TariffSerializer
     queryset = Tariff.objects.all()
 
@@ -193,6 +208,7 @@ class AdminAccountViewSet(viewsets.ModelViewSet):
     """/api/admin/admins — faqat Superadmin platforma administratorlarini boshqaradi."""
 
     permission_classes = [IsSuperAdmin]
+    pagination_class = None
     serializer_class = AdminAccountSerializer
     queryset = User.objects.filter(role__in=[Role.ADMIN, Role.SUPERADMIN]).order_by('id')
 

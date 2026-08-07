@@ -19,6 +19,12 @@ urlpatterns = [
 
     path('listings/<int:pk>/contract', views.create_contract_view, name='create-contract'),
     path('listings/<int:pk>/contract/', views.create_contract_view),
+    path('contracts/<int:pk>/approve', views.approve_contract_view, name='approve-contract'),
+    path('contracts/<int:pk>/approve/', views.approve_contract_view),
+    path('contracts/<int:pk>/cancel', views.cancel_contract_view, name='cancel-contract'),
+    path('contracts/<int:pk>/cancel/', views.cancel_contract_view),
+    path('contracts/<int:pk>/sign-request', views.sign_request_view, name='sign-request'),
+    path('contracts/<int:pk>/sign-request/', views.sign_request_view),
     path('contracts/<int:pk>/sign', views.sign_contract_view, name='sign-contract'),
     path('contracts/<int:pk>/sign/', views.sign_contract_view),
     path('contracts/<int:pk>', views.contract_detail_view, name='contract-detail'),

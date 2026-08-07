@@ -77,21 +77,57 @@ class ChatThreadSerializer(serializers.ModelSerializer):
 
 class ContractSerializer(serializers.ModelSerializer):
     seller_name = serializers.CharField(source='seller.name', read_only=True)
+    seller_phone = serializers.CharField(source='seller.phone', read_only=True)
     buyer_name = serializers.CharField(source='buyer.name', read_only=True)
+    buyer_phone = serializers.CharField(source='buyer.phone', read_only=True)
     listing_address = serializers.CharField(source='listing.address', read_only=True)
+    listing_district = serializers.CharField(source='listing.district', read_only=True)
+    listing_area = serializers.DecimalField(
+        source='listing.area', max_digits=7, decimal_places=1, read_only=True
+    )
+    status_label = serializers.CharField(source='get_status_display', read_only=True)
     pdf_url = serializers.SerializerMethodField()
+    #: Ilova shu ikki bayroqqa qarab qaysi tugmani ko'rsatishni hal qiladi.
+    my_role = serializers.SerializerMethodField()
+    can_sign = serializers.SerializerMethodField()
 
     class Meta:
         model = Contract
         fields = [
-            'id', 'listing', 'listing_address', 'seller', 'seller_name', 'buyer', 'buyer_name',
+            'id', 'listing', 'listing_address', 'listing_district', 'listing_area',
+            'seller', 'seller_name', 'seller_phone', 'buyer', 'buyer_name', 'buyer_phone',
             'agent', 'deal', 'price', 'currency', 'service_fee', 'seller_signed', 'buyer_signed',
-            'status', 'pdf_url', 'created_at', 'signed_at',
+            'status', 'status_label', 'my_role', 'can_sign', 'cancel_reason',
+            'pdf_url', 'created_at', 'seller_approved_at', 'signed_at',
         ]
         read_only_fields = [
             'id', 'seller', 'buyer', 'agent', 'seller_signed', 'buyer_signed',
-            'status', 'pdf_url', 'created_at', 'signed_at',
+            'status', 'pdf_url', 'created_at', 'seller_approved_at', 'signed_at',
         ]
+
+    def _user(self):
+        request = self.context.get('request')
+        return getattr(request, 'user', None)
+
+    def get_my_role(self, obj):
+        user = self._user()
+        if user is None or not user.is_authenticated:
+            return None
+        if user.id == obj.seller_id:
+            return 'seller'
+        if user.id == obj.buyer_id:
+            return 'buyer'
+        return None
+
+    def get_can_sign(self, obj):
+        user = self._user()
+        return bool(
+            user
+            and user.is_authenticated
+            and user.id == obj.buyer_id
+            and obj.seller_signed
+            and obj.status == 'awaiting_sign'
+        )
 
     def get_pdf_url(self, obj):
         request = self.context.get('request')

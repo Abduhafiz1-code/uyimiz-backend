@@ -6,10 +6,25 @@ from .models import User
 class UserPublicSerializer(serializers.ModelSerializer):
     """Asosiy ilova uchun — oddiy foydalanuvchi profili (parol/rol yashirin)."""
 
+    initials = serializers.CharField(read_only=True)
+    avatar_url = serializers.SerializerMethodField()
+    user_kind_label = serializers.CharField(source='get_user_kind_display', read_only=True)
+
     class Meta:
         model = User
-        fields = ['id', 'phone', 'name', 'email', 'verified', 'user_kind', 'date_joined']
+        fields = [
+            'id', 'phone', 'name', 'email', 'verified', 'user_kind', 'user_kind_label',
+            'district', 'initials', 'avatar_url', 'date_joined',
+        ]
+        # Telefon shu yerdan emas, alohida OTP tasdiqli oqim orqali o'zgaradi.
         read_only_fields = ['id', 'phone', 'verified', 'date_joined']
+
+    def get_avatar_url(self, obj):
+        if not obj.avatar:
+            return None
+        request = self.context.get('request')
+        url = obj.avatar.url
+        return request.build_absolute_uri(url) if request else url
 
 
 class AgentSerializer(serializers.ModelSerializer):
@@ -80,3 +95,22 @@ class VerifyCodeSerializer(serializers.Serializer):
 class PasswordLoginSerializer(serializers.Serializer):
     phone = serializers.CharField()
     password = serializers.CharField(style={'input_type': 'password'})
+
+
+class PhoneChangeRequestSerializer(serializers.Serializer):
+    """1-bosqich: yangi raqamga kod yuborish."""
+
+    phone = serializers.CharField()
+
+
+class PhoneChangeConfirmSerializer(serializers.Serializer):
+    """2-bosqich: yangi raqamga kelgan kodni tasdiqlash."""
+
+    phone = serializers.CharField()
+    code = serializers.CharField()
+
+
+class AvatarSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ['avatar']

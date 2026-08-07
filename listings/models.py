@@ -163,7 +163,16 @@ class ChatMessage(models.Model):
 
 
 class ContractStatus(models.TextChoices):
-    DRAFT = 'draft', 'Loyihada'
+    """Shartnoma bosqichlari — har biri alohida tekshiruvdan o'tadi.
+
+    ``draft``          — xaridor so'rov yubordi, sotuvchi roziligi kutilmoqda
+    ``awaiting_sign``  — sotuvchi rozi bo'ldi, endi xaridor SMS-kod bilan imzolaydi
+    ``signed``         — ikkala tomon tasdiqladi, PDF yaratildi
+    ``cancelled``      — tomonlardan biri bekor qildi
+    """
+
+    DRAFT = 'draft', 'Sotuvchi roziligi kutilmoqda'
+    AWAITING_SIGN = 'awaiting_sign', 'Imzo kutilmoqda'
     SIGNED = 'signed', 'Imzolangan'
     CANCELLED = 'cancelled', 'Bekor qilingan'
 
@@ -189,13 +198,28 @@ class Contract(models.Model):
     #: 3-bosqich, 4-band: onlayn shartnoma xizmat haqi (masalan 50 000 so'm).
     service_fee = models.DecimalField(max_digits=12, decimal_places=0, default=0)
 
-    seller_signed = models.BooleanField(default=True)
+    #: Sotuvchi endi avtomatik "rozi" hisoblanmaydi — u alohida tasdiqlashi shart.
+    seller_signed = models.BooleanField(default=False)
     buyer_signed = models.BooleanField(default=False)
-    status = models.CharField(max_length=12, choices=ContractStatus.choices, default=ContractStatus.DRAFT)
+    status = models.CharField(max_length=16, choices=ContractStatus.choices, default=ContractStatus.DRAFT)
     pdf = models.FileField(upload_to=contract_pdf_path, null=True, blank=True)
 
+    cancelled_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='+'
+    )
+    cancel_reason = models.CharField(max_length=200, blank=True)
+
     created_at = models.DateTimeField(default=timezone.now)
+    seller_approved_at = models.DateTimeField(null=True, blank=True)
     signed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
 
     def __str__(self):
         return f'C-{self.id} — {self.listing_id}'
+
+    @property
+    def is_open(self):
+        """Hali kuchda — ya'ni yangi shartnoma ochishga to'sqinlik qiladi."""
+        return self.status in (ContractStatus.DRAFT, ContractStatus.AWAITING_SIGN)

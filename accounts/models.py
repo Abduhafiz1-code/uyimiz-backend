@@ -109,6 +109,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     user_kind = models.CharField(max_length=16, choices=UserKind.choices, default=UserKind.BUYER)
     verified = models.BooleanField(default=False, help_text='myID yoki SMS orqali tasdiqlangan')
     avatar_initials = models.CharField(max_length=4, blank=True)
+    avatar = models.ImageField(upload_to='avatars/', null=True, blank=True)
     district = models.CharField(max_length=64, blank=True, help_text='Agent uchun biriktirilgan hudud')
 
     # ---- Uyimiz Agent (makler) maydonlari -------------------------------
@@ -201,17 +202,54 @@ class User(AbstractBaseUser, PermissionsMixin):
         self.save(update_fields=['rating', 'rating_count'])
 
 
+class OTPPurpose(models.TextChoices):
+    """Bitta SMS-kod jadvali uch xil vazifaga xizmat qiladi — har biri alohida tekshiriladi,
+    ya'ni kirish uchun olingan kod bilan shartnoma imzolab bo'lmaydi."""
+
+    LOGIN = 'login', 'Tizimga kirish'
+    PHONE_CHANGE = 'phone_change', "Telefon raqamini o'zgartirish"
+    CONTRACT = 'contract', 'Shartnomani imzolash'
+
+
 class PhoneOTP(models.Model):
     """SMS-kod orqali tasdiqlash (2.2-band: 'Verifikatsiya: myID yoki SMS')."""
 
+    MAX_ATTEMPTS = 5
+
     phone = models.CharField(max_length=20, db_index=True)
     code = models.CharField(max_length=6)
+    purpose = models.CharField(
+        max_length=16, choices=OTPPurpose.choices, default=OTPPurpose.LOGIN, db_index=True
+    )
+    #: Vazifaga bog'liq qo'shimcha ma'lumot — masalan shartnoma ID'si.
+    reference = models.CharField(max_length=64, blank=True)
+    attempts = models.PositiveSmallIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField()
     consumed = models.BooleanField(default=False)
 
+    class Meta:
+        ordering = ['-created_at']
+
+    @property
+    def expired(self):
+        return timezone.now() > self.expires_at
+
+    @property
+    def locked(self):
+        return self.attempts >= self.MAX_ATTEMPTS
+
     def is_valid(self, code):
-        return not self.consumed and self.code == code and timezone.now() <= self.expires_at
+        return not self.consumed and not self.locked and not self.expired and self.code == str(code)
+
+    def register_attempt(self):
+        """Har bir noto'g'ri urinish sanaladi — kodni cheksiz terib ko'rib bo'lmaydi."""
+        self.attempts += 1
+        self.save(update_fields=['attempts'])
+
+    def consume(self):
+        self.consumed = True
+        self.save(update_fields=['consumed'])
 
     def __str__(self):
-        return f'{self.phone} — {self.code}'
+        return f'{self.phone} — {self.get_purpose_display()}'

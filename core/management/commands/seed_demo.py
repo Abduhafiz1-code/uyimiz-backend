@@ -26,13 +26,15 @@ class Command(BaseCommand):
 
     @transaction.atomic
     def handle(self, *args, **options):
-        from accounts.models import AdminTitle, CertificationStatus, Role, User
+        from accounts.models import AdminTitle, CertificationStatus, Role, User, UserKind
         from core.models import District
         from crm.models import (
             Activity, ActivityKind, Client, ClientStatus, Deal, DealStage, DealType,
             LeadSource, Property, PropertyBadge, PropertyStatus, Showing, ShowingStatus,
         )
-        from listings.models import DealKind, Listing, ListingBadge, ListingStatus, PropertyType, RepairState
+        from listings.models import (
+            DealKind, DocsState, Listing, ListingBadge, ListingStatus, PropertyType, RepairState,
+        )
         from platform_admin.models import PlatformSettings, Tariff
 
         if options['flush']:
@@ -121,9 +123,17 @@ class Command(BaseCommand):
         ]
         users = []
         for i, name in enumerate(user_names):
+            # Shartnoma tuzish uchun ikkala tomon ham myID orqali tasdiqlangan
+            # bo'lishi shart, shuning uchun demo foydalanuvchilarning aksariyati
+            # tasdiqlangan. Oxirgi ikkitasi — tekshiruv to'sig'ini ko'rsatish uchun.
             user, created = User.objects.get_or_create(
                 phone=f'+99890222200{i}',
-                defaults=dict(name=name, role=Role.USER, verified=random.choice([True, False])),
+                defaults=dict(
+                    name=name,
+                    role=Role.USER,
+                    user_kind=random.choice(list(UserKind.values)),
+                    verified=i < len(user_names) - 2,
+                ),
             )
             users.append(user)
         self.stdout.write(self.style.SUCCESS(f'{len(users)} ta oddiy foydalanuvchi tayyor'))
@@ -149,6 +159,9 @@ class Command(BaseCommand):
                     year=random.randint(1990, 2024),
                     ptype=random.choice(list(PropertyType.values)),
                     repair=random.choice(list(RepairState.values)),
+                    # Hujjatlari tayyor bo'lmagan e'longa shartnoma ochilmaydi —
+                    # bir nechtasini shu holatda qoldiramiz.
+                    docs=DocsState.READY if random.random() < 0.85 else DocsState.PROCESS,
                     verified=random.random() < 0.6,
                     status=random.choice(statuses), badge=random.choice(badges),
                     description='Qulay joylashuvda, barcha qulayliklarga ega uy-joy.',
