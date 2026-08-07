@@ -16,4 +16,5 @@ pip-*.log
 .DS_Store
 *.md
 !README.md
-fly.toml
+render.yaml
+build.sh

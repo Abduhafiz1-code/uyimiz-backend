@@ -1,0 +1,22 @@
+# Shell skriptlari Linux konteynerida ishlaydi — LF bo'lishi SHART.
+# CRLF bo'lsa Docker "exec /app/entrypoint.sh: no such file or directory" beradi.
+*.sh text eol=lf
+
+# Dockerfile va konfiguratsiya fayllari ham LF
+Dockerfile text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+
+# Django/Python
+*.py text eol=lf
+*.html text eol=lf
+*.json text eol=lf
+
+# Binar fayllar — teginmang
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.pdf binary
+*.ico binary
+*.sqlite3 binary

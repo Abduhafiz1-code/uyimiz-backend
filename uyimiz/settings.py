@@ -28,22 +28,20 @@ if not SECRET_KEY:
     raise RuntimeError('DJANGO_SECRET_KEY majburiy (DEBUG=0 rejimida).')
 
 ALLOWED_HOSTS = env_list('DJANGO_ALLOWED_HOSTS', '*' if DEBUG else '')
-# Fly.io har bir app'ga <app>.fly.dev domenini beradi.
-FLY_APP_NAME = os.environ.get('FLY_APP_NAME')
-if FLY_APP_NAME:
-    # .fly.dev — tashqi domen; qolganlari Fly'ning ichki health-check'i uchun.
-    ALLOWED_HOSTS += [
-        f'{FLY_APP_NAME}.fly.dev', '.fly.dev', '.internal',
-        'localhost', '127.0.0.1', '[::1]',
-    ]
+CSRF_TRUSTED_ORIGINS = env_list('DJANGO_CSRF_TRUSTED_ORIGINS')
 
-# Fly proxy HTTPS'ni tugatadi va X-Forwarded-Proto yuboradi.
+# Render har bir servisga <name>.onrender.com domenini beradi va uni
+# RENDER_EXTERNAL_HOSTNAME env'iga avtomatik yozadi.
+RENDER_HOSTNAME = os.environ.get('RENDER_EXTERNAL_HOSTNAME')
+if RENDER_HOSTNAME:
+    ALLOWED_HOSTS += [RENDER_HOSTNAME, '.onrender.com']
+    CSRF_TRUSTED_ORIGINS.append(f'https://{RENDER_HOSTNAME}')
+    # Render'ning ichki health-check'i lokal manzilga so'rov yuboradi.
+    ALLOWED_HOSTS += ['localhost', '127.0.0.1', '[::1]']
+
+# Render proxy HTTPS'ni tugatadi va X-Forwarded-Proto yuboradi.
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 USE_X_FORWARDED_HOST = True
-
-CSRF_TRUSTED_ORIGINS = env_list('DJANGO_CSRF_TRUSTED_ORIGINS')
-if FLY_APP_NAME:
-    CSRF_TRUSTED_ORIGINS.append(f'https://{FLY_APP_NAME}.fly.dev')
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -194,6 +192,9 @@ DATA_UPLOAD_MAX_MEMORY_SIZE = 20 * 1024 * 1024
 # ─────────────────── Xavfsizlik (faqat prod) ───────────────────
 if not DEBUG:
     SECURE_SSL_REDIRECT = env_bool('DJANGO_SECURE_SSL_REDIRECT', '1')
+    # Render'ning health-check'i ichki HTTP orqali keladi — redirect qilinmasin,
+    # aks holda 301 qaytadi va deploy "unhealthy" deb hisoblanadi.
+    SECURE_REDIRECT_EXEMPT = [r'^api/health/?$']
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
     SECURE_HSTS_SECONDS = int(os.environ.get('DJANGO_HSTS_SECONDS', 31536000))
