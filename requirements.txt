@@ -4,3 +4,11 @@ django-cors-headers==4.6.0
 django-filter==24.3
 Pillow==11.1.0
 reportlab==4.2.5
+
+# ── Production ──
+gunicorn==23.0.0
+whitenoise==6.8.2
+psycopg[binary]==3.2.3
+dj-database-url==2.3.0
+django-storages==1.14.4
+boto3==1.35.81
