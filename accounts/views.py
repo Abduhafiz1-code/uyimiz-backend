@@ -1,14 +1,23 @@
+import logging
 import random
 from datetime import timedelta
 
+from django.conf import settings
 from django.contrib.auth import authenticate
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.authtoken.models import Token
-from rest_framework.decorators import api_view, parser_classes, permission_classes
+from rest_framework.decorators import (
+    api_view,
+    parser_classes,
+    permission_classes,
+    throttle_classes,
+)
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+
+from uyimiz.throttling import LoginThrottle, OtpThrottle
 
 from .models import OTPPurpose, PhoneOTP, Role, User, normalize_phone
 from .serializers import (
@@ -23,9 +32,27 @@ from .serializers import (
     VerifyCodeSerializer,
 )
 
+logger = logging.getLogger(__name__)
+
 OTP_TTL_SECONDS = 300
 #: Bitta raqamga ketma-ket kod so'rash oralig'i — SMS spamining oldini oladi.
 OTP_RESEND_COOLDOWN_SECONDS = 60
+
+
+def otp_payload(otp, phone):
+    """Kod so'ralganda qaytariladigan javob.
+
+    XAVFSIZLIK: kodning o'zi (`demoCode`) faqat DEBUG rejimida qaytariladi.
+    Production'da uni javobga qo'shish — istalgan kishi istalgan raqam bilan
+    kirishi mumkin degani, chunki kodni SMS kutmasdan javobdan o'qib oladi.
+    """
+    data = {'ok': True, 'phone': phone, 'expiresInSec': OTP_TTL_SECONDS}
+    if settings.DEBUG:
+        data['demoCode'] = otp.code
+    else:
+        # SMS provayder ulanmaguncha kod faqat server logida ko'rinadi.
+        logger.info('OTP for %s: %s', phone, otp.code)
+    return data
 
 
 def issue_otp(phone, purpose, reference=''):
@@ -92,8 +119,13 @@ def serializer_for(user):
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
+@throttle_classes([OtpThrottle])
 def send_code_view(request):
-    """SMS-kod yuboradi (DEMO: real SMS integratsiyasi o'rniga javobning o'zida qaytadi)."""
+    """SMS-kod yuboradi.
+
+    Kod DEBUG rejimida javobda (`demoCode`), prod'da esa server logida
+    ko'rinadi — SMS provayder ulanmaguncha shunday.
+    """
     serializer = SendCodeSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
     phone = normalize_phone(serializer.validated_data['phone'])
@@ -105,9 +137,7 @@ def send_code_view(request):
         return Response(
             {'error': 'too_soon', 'retryAfterSec': cooldown}, status=status.HTTP_429_TOO_MANY_REQUESTS
         )
-    return Response({
-        'ok': True, 'phone': phone, 'demoCode': otp.code, 'expiresInSec': OTP_TTL_SECONDS,
-    })
+    return Response(otp_payload(otp, phone))
 
 
 @api_view(['POST'])
@@ -138,6 +168,7 @@ def verify_code_view(request):
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
+@throttle_classes([LoginThrottle])
 def password_login_view(request):
     """Agent va admin panel uchun bitta login: DRF standart 'Token <key>' sxemasi."""
     serializer = PasswordLoginSerializer(data=request.data)
@@ -230,9 +261,7 @@ def phone_change_request_view(request):
         return Response(
             {'error': 'too_soon', 'retryAfterSec': cooldown}, status=status.HTTP_429_TOO_MANY_REQUESTS
         )
-    return Response({
-        'ok': True, 'phone': new_phone, 'demoCode': otp.code, 'expiresInSec': OTP_TTL_SECONDS,
-    })
+    return Response(otp_payload(otp, new_phone))
 
 
 @api_view(['POST'])

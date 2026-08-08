@@ -3,11 +3,18 @@ from decimal import Decimal, InvalidOperation
 from django.db.models import Q
 from django.utils import timezone
 from rest_framework import status, viewsets
-from rest_framework.decorators import action, api_view, permission_classes
+from rest_framework.decorators import (
+    action,
+    api_view,
+    permission_classes,
+    throttle_classes,
+)
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
+
+from uyimiz.throttling import SignThrottle
 
 from .models import (
     ChatMessage,
@@ -358,10 +365,11 @@ def cancel_contract_view(request, pk):
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
+@throttle_classes([SignThrottle])
 def sign_request_view(request, pk):
     """Imzolash uchun xaridor telefoniga bir martalik kod yuboradi."""
     from accounts.models import OTPPurpose
-    from accounts.views import OTP_TTL_SECONDS, issue_otp
+    from accounts.views import issue_otp
 
     contract = Contract.objects.filter(pk=pk).first()
     if not contract:
@@ -380,9 +388,11 @@ def sign_request_view(request, pk):
         return Response(
             {'error': 'too_soon', 'retryAfterSec': cooldown}, status=status.HTTP_429_TOO_MANY_REQUESTS
         )
-    return Response({
-        'ok': True, 'phone': request.user.phone, 'demoCode': otp.code, 'expiresInSec': OTP_TTL_SECONDS,
-    })
+    # XAVFSIZLIK: imzo kodi faqat DEBUG rejimida javobda qaytariladi.
+    # Prod'da uni qaytarish — istalgan kishi shartnomani imzolay olishi demak.
+    from accounts.views import otp_payload
+
+    return Response(otp_payload(otp, request.user.phone))
 
 
 @api_view(['POST'])

@@ -28,7 +28,10 @@ if not SECRET_KEY:
     raise RuntimeError('DJANGO_SECRET_KEY majburiy (DEBUG=0 rejimida).')
 
 ALLOWED_HOSTS = env_list('DJANGO_ALLOWED_HOSTS', '*' if DEBUG else '')
-CSRF_TRUSTED_ORIGINS = env_list('DJANGO_CSRF_TRUSTED_ORIGINS')
+CSRF_TRUSTED_ORIGINS = env_list('DJANGO_CSRF_TRUSTED_ORIGINS') + [
+    'https://*.vercel.app',
+    'https://*.uyimiz.uz',
+]
 
 # Render har bir servisga <name>.onrender.com domenini beradi va uni
 # RENDER_EXTERNAL_HOSTNAME env'iga avtomatik yozadi.
@@ -171,6 +174,15 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': ['rest_framework.permissions.AllowAny'],
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 20,
+
+    # OTP, login va imzo endpointlariga cheklov — SMS spami va parol
+    # brute-force'ining oldini oladi. Klasslar: uyimiz/throttling.py,
+    # view'larda @throttle_classes([...]) orqali qo'llanadi.
+    'DEFAULT_THROTTLE_RATES': {
+        'otp': os.environ.get('THROTTLE_OTP', '10/hour'),
+        'login': os.environ.get('THROTTLE_LOGIN', '20/hour'),
+        'sign': os.environ.get('THROTTLE_SIGN', '15/hour'),
+    },
     'DEFAULT_FILTER_BACKENDS': ['django_filters.rest_framework.DjangoFilterBackend'],
     'DEFAULT_RENDERER_CLASSES': (
         ['rest_framework.renderers.JSONRenderer', 'rest_framework.renderers.BrowsableAPIRenderer']
@@ -183,8 +195,22 @@ REST_FRAMEWORK = {
 # Mobil ilova, agent CRM va admin panel — barchasi shu bitta backendga murojaat qiladi.
 CORS_ALLOW_ALL_ORIGINS = env_bool('CORS_ALLOW_ALL', '1' if DEBUG else '0')
 CORS_ALLOWED_ORIGINS = env_list('CORS_ALLOWED_ORIGINS')
-CORS_ALLOWED_ORIGIN_REGEXES = env_list('CORS_ALLOWED_ORIGIN_REGEXES')
 CORS_ALLOW_CREDENTIALS = True
+
+# Vercel har bir deploy uchun alohida preview domen beradi
+# (masalan uyimiz-admin-git-main-abduhafiz.vercel.app) — barchasini qamrash
+# uchun regex ishlatiladi. Lokal dev portlari ham shu yerda.
+CORS_ALLOWED_ORIGIN_REGEXES = env_list('CORS_ALLOWED_ORIGIN_REGEXES') + [
+    r'^https://.*\.vercel\.app$',
+    r'^https://.*\.netlify\.app$',
+    r'^https://.*\.uyimiz\.uz$',
+    r'^http://localhost:\d+$',
+    r'^http://127\.0\.0\.1:\d+$',
+]
+
+# Rasm/PDF'ni <canvas> yoki fetch orqali o'qish uchun media javoblariga ham
+# CORS sarlavhasi kerak bo'ladi.
+CORS_URLS_REGEX = r'^/(api|media)/.*$'
 
 FILE_UPLOAD_MAX_MEMORY_SIZE = 20 * 1024 * 1024
 DATA_UPLOAD_MAX_MEMORY_SIZE = 20 * 1024 * 1024
