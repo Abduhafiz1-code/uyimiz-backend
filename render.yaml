@@ -46,6 +46,15 @@ services:
         value: "1"
       - key: SMS_ENABLED
         value: "0"
+
+      # ── Admin hisobi (Shell'siz yaratish uchun) ──
+      - key: ADMIN_PHONE
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      # Demo ma'lumot kerak bo'lsa 1 qiling, keyin olib tashlang.
+      - key: SEED_DEMO
+        value: "0"
       - key: DJANGO_ALLOWED_HOSTS
         value: uyimiz-backend.onrender.com
       - key: DJANGO_CSRF_TRUSTED_ORIGINS
