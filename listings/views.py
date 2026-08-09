@@ -1,6 +1,6 @@
 from decimal import Decimal, InvalidOperation
 
-from django.db.models import Q
+from django.db.models import Case, IntegerField, Q, Value, When
 from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import (
@@ -24,6 +24,7 @@ from .models import (
     DocsState,
     Favorite,
     Listing,
+    ListingBadge,
     ListingStatus,
 )
 from .pdf import render_contract_pdf
@@ -99,8 +100,22 @@ class ListingViewSet(viewsets.ModelViewSet):
             'expensive': ['-price'],
             'area': ['-area'],
         }.get(sort, ['-created_at'])
-        # "Top e'lon"/Premium joylashuv har doim ustunlik oladi (docx 3-bosqich, 2-band).
-        qs = qs.order_by('-badge', *order)
+
+        # "Top e'lon"/Premium joylashuv har doim ustunlik oladi
+        # (docx 3-bosqich, 2-band): VIP → Premium → Oddiy.
+        #
+        # Ilgari bu `-badge` bilan qilingan edi va faqat alifbo tasodifi
+        # tufayli to'g'ri ishlardi ('vip' > 'premium' > 'oddiy'). Yangi
+        # belgi qo'shilsa tartib jimgina buzilardi — shuning uchun
+        # ustuvorlik aniq raqam bilan beriladi.
+        qs = qs.annotate(
+            badge_rank=Case(
+                When(badge=ListingBadge.VIP, then=Value(0)),
+                When(badge=ListingBadge.PREMIUM, then=Value(1)),
+                default=Value(2),
+                output_field=IntegerField(),
+            )
+        ).order_by('badge_rank', *order)
         return qs
 
     def list(self, request, *args, **kwargs):

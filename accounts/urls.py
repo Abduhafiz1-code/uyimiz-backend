@@ -16,6 +16,10 @@ urlpatterns = [
     path('me/phone/', views.phone_change_request_view),
     path('me/phone/confirm', views.phone_change_confirm_view, name='auth-phone-confirm'),
     path('me/phone/confirm/', views.phone_change_confirm_view),
+    # Uyimiz Agent bo'lish uchun ariza (avval SMS-kod bilan kirish shart)
+    path('agent-apply', views.agent_apply_view, name='auth-agent-apply'),
+    path('agent-apply/', views.agent_apply_view),
+
     path('logout', views.logout_view, name='auth-logout'),
     path('logout/', views.logout_view),
 ]

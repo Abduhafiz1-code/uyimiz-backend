@@ -114,3 +114,31 @@ class AvatarSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ['avatar']
+
+
+class AgentApplySerializer(serializers.Serializer):
+    """Uyimiz Agent bo'lish uchun ariza.
+
+    Foydalanuvchi avval SMS-kod bilan kirgan bo'lishi kerak — shuning
+    uchun bu yerda telefon so'ralmaydi, u tokendan olinadi.
+    """
+
+    name = serializers.CharField(max_length=150)
+    district = serializers.CharField(max_length=64)
+    email = serializers.EmailField(required=False, allow_blank=True)
+    historical_deals = serializers.IntegerField(
+        required=False, min_value=0, max_value=10000,
+        help_text='Platformadan tashqarida yopgan bitimlari soni',
+    )
+
+    def validate_name(self, v):
+        v = v.strip()
+        if len(v) < 3:
+            raise serializers.ValidationError("Ism kamida 3 ta harfdan iborat bo'lsin")
+        return v
+
+    def validate_district(self, v):
+        v = v.strip()
+        if not v:
+            raise serializers.ValidationError('Hududni tanlang')
+        return v

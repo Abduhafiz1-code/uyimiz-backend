@@ -19,9 +19,10 @@ from rest_framework.response import Response
 
 from uyimiz.throttling import LoginThrottle, OtpThrottle
 
-from .models import OTPPurpose, PhoneOTP, Role, User, normalize_phone
+from .models import CertificationStatus, OTPPurpose, PhoneOTP, Role, User, normalize_phone
 from .serializers import (
     AdminUserSerializer,
+    AgentApplySerializer,
     AgentSerializer,
     AvatarSerializer,
     PasswordLoginSerializer,
@@ -183,8 +184,71 @@ def verify_code_view(request):
     token, _ = Token.objects.get_or_create(user=user)
     return Response({
         'token': token.key,
-        'user': UserPublicSerializer(user, context={'request': request}).data,
+        # `role` — CRM va admin panel qaysi foydalanuvchi kirganini shu
+        # maydondan biladi (parol bilan kirishdagi javob bilan bir xil).
+        'role': user.role,
+        'certification': user.certification,
+        'user': serializer_for(user)(user, context={'request': request}).data,
     })
+
+
+# ───────────────────────── agent bo'lish uchun ariza ─────────────────────────
+
+@api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
+def agent_apply_view(request):
+    """Uyimiz Agent bo'lish uchun ariza.
+
+    Oqim: foydalanuvchi avval odatdagidek SMS-kod bilan kiradi
+    (`/api/auth/send-code` → `/api/auth/verify`), so'ng shu yerga ariza
+    yuboradi. Roli darhol `agent` bo'ladi, lekin `certification`
+    "Kutilmoqda" holatida turadi — admin tasdiqlagunicha CRM yopiq
+    (`IsAgent` ruxsati shuni tekshiradi).
+
+    GET  — arizaning hozirgi holatini qaytaradi.
+    POST — ariza topshiradi yoki rad etilgan arizani qayta yuboradi.
+    """
+    user = request.user
+
+    def holat():
+        return Response({
+            'role': user.role,
+            'certification': user.certification,
+            'canEnterCrm': user.role == Role.AGENT and user.certification == CertificationStatus.TASDIQLANGAN,
+            'user': serializer_for(user)(user, context={'request': request}).data,
+        })
+
+    if request.method == 'GET':
+        return holat()
+
+    if user.role in (Role.ADMIN, Role.SUPERADMIN):
+        return Response({'error': 'admin_cannot_apply'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if user.role == Role.AGENT:
+        if user.certification == CertificationStatus.TASDIQLANGAN:
+            return Response({'error': 'already_agent'}, status=status.HTTP_400_BAD_REQUEST)
+        if user.certification == CertificationStatus.KUTILMOQDA:
+            # Ariza allaqachon navbatda — takror yuborilmasin.
+            return holat()
+
+    serializer = AgentApplySerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    data = serializer.validated_data
+
+    user.role = Role.AGENT
+    user.certification = CertificationStatus.KUTILMOQDA
+    user.name = data.get('name') or user.name
+    user.district = data.get('district', '')
+    if data.get('email'):
+        user.email = data['email']
+    # Platformadan tashqarida qilgan bitimlari — admin arizani baholashda
+    # shu raqamga qaraydi. Tasdiqlangach umumiy bitimlar soniga qo'shiladi.
+    if data.get('historical_deals') is not None:
+        user.historical_deals = data['historical_deals']
+    user.save()
+
+    logger.info('Yangi agent arizasi: %s (%s)', user.phone, user.name)
+    return Response(holat().data, status=status.HTTP_201_CREATED)
 
 
 # ───────────────────────── agent / admin: telefon + parol ─────────────────────────
@@ -205,9 +269,12 @@ def password_login_view(request):
     if not user.is_active:
         return Response({'detail': 'Akkaunt bloklangan'}, status=status.HTTP_403_FORBIDDEN)
     token, _ = Token.objects.get_or_create(user=user)
-    return Response(
-        {'token': token.key, 'role': user.role, 'user': serializer_for(user)(user).data}
-    )
+    return Response({
+        'token': token.key,
+        'role': user.role,
+        'certification': user.certification,
+        'user': serializer_for(user)(user).data,
+    })
 
 
 # ───────────────────────── umumiy: barcha rollar uchun ─────────────────────────
