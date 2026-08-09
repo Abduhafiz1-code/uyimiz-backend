@@ -215,6 +215,23 @@ CORS_URLS_REGEX = r'^/(api|media)/.*$'
 FILE_UPLOAD_MAX_MEMORY_SIZE = 20 * 1024 * 1024
 DATA_UPLOAD_MAX_MEMORY_SIZE = 20 * 1024 * 1024
 
+# ─────────────────────── SMS / OTP rejimi ───────────────────────
+# SMS provayder (Eskiz.uz va h.k.) hali ulanmagan. Shu sababli tizimni
+# sinab ko'rish uchun "test rejimi" bor: OTP kodi SMS o'rniga API
+# javobining o'zida qaytariladi va ilova uni ekranda ko'rsatadi.
+#
+#   OTP_TEST_MODE=1  → kod javobda keladi (SMS kerak emas)
+#   OTP_TEST_MODE=0  → kod faqat server logida (real SMS kutiladi)
+#
+# Sukut bo'yicha: DEBUG=1 da yoqilgan, prod'da o'chirilgan.
+#
+# ⚠️ OMMAGA OCHISHDAN OLDIN buni albatta 0 ga o'tkazing — aks holda
+# istalgan kishi istalgan raqam bilan kira oladi.
+OTP_TEST_MODE = env_bool('OTP_TEST_MODE', '1' if DEBUG else '0')
+
+# SMS provayder ulangach 1 qilinadi. Hozircha kod faqat logga yoziladi.
+SMS_ENABLED = env_bool('SMS_ENABLED', '0')
+
 # ─────────────────── Xavfsizlik (faqat prod) ───────────────────
 if not DEBUG:
     SECURE_SSL_REDIRECT = env_bool('DJANGO_SECURE_SSL_REDIRECT', '1')

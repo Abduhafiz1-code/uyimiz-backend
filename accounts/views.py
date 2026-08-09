@@ -39,18 +39,41 @@ OTP_TTL_SECONDS = 300
 OTP_RESEND_COOLDOWN_SECONDS = 60
 
 
+def send_sms(phone, text):
+    """SMS yuborish. Provayder ulanmaguncha faqat logga yozadi.
+
+    Eskiz.uz / Play Mobile ulanganda shu funksiyaning ichi almashtiriladi —
+    chaqiruvchi kodga tegish shart emas.
+    """
+    if not settings.SMS_ENABLED:
+        logger.info('[SMS o\'chirilgan] %s → %s', phone, text)
+        return False
+    # TODO: bu yerga provayder integratsiyasi qo'yiladi.
+    logger.warning('SMS_ENABLED=1, lekin provayder hali ulanmagan: %s', phone)
+    return False
+
+
 def otp_payload(otp, phone):
     """Kod so'ralganda qaytariladigan javob.
 
-    XAVFSIZLIK: kodning o'zi (`demoCode`) faqat DEBUG rejimida qaytariladi.
-    Production'da uni javobga qo'shish — istalgan kishi istalgan raqam bilan
-    kirishi mumkin degani, chunki kodni SMS kutmasdan javobdan o'qib oladi.
+    Test rejimida (`OTP_TEST_MODE=1`) kod javobning o'zida qaytariladi —
+    SMS provayder kerak emas, ilova kodni ekranda ko'rsatadi.
+
+    ⚠️ Prod'da `OTP_TEST_MODE=0` bo'lishi shart, aks holda istalgan kishi
+    istalgan raqam bilan kira oladi.
     """
-    data = {'ok': True, 'phone': phone, 'expiresInSec': OTP_TTL_SECONDS}
-    if settings.DEBUG:
+    send_sms(phone, f'Uyimiz.uz tasdiqlash kodi: {otp.code}')
+
+    data = {
+        'ok': True,
+        'phone': phone,
+        'expiresInSec': OTP_TTL_SECONDS,
+        # Ilova shu bayroqqa qarab "test rejimi" yozuvini ko'rsatadi.
+        'testMode': settings.OTP_TEST_MODE,
+    }
+    if settings.OTP_TEST_MODE:
         data['demoCode'] = otp.code
     else:
-        # SMS provayder ulanmaguncha kod faqat server logida ko'rinadi.
         logger.info('OTP for %s: %s', phone, otp.code)
     return data
 

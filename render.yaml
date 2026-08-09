@@ -38,6 +38,14 @@ services:
         value: "0"               # Render'ning ichki ulanishi uchun SSL shart emas
       - key: DJANGO_LOG_LEVEL
         value: INFO
+
+      # ── SMS ──
+      # Sinov uchun 1 (kod javobda qaytadi, SMS kerak emas).
+      # Ommaga ochishdan oldin 0 ga o'tkazing.
+      - key: OTP_TEST_MODE
+        value: "1"
+      - key: SMS_ENABLED
+        value: "0"
       - key: DJANGO_ALLOWED_HOSTS
         value: uyimiz-backend.onrender.com
       - key: DJANGO_CSRF_TRUSTED_ORIGINS
