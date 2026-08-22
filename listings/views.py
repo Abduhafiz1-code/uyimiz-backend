@@ -230,47 +230,166 @@ def favorite_toggle_view(request, pk):
 
 
 # ───────────────────────── chat ─────────────────────────
+#
+# Ikki xil suhbat bor va ikkalasi ham shu bo'limda:
+#   1) e'lon suhbati       — /api/listings/<id>/chat
+#   2) to'g'ridan-to'g'ri   — /api/chats/direct/<user_id>   (agent bilan yozishish)
+# Ikkalasi ham bir xil javob shaklini qaytaradi: {thread, items}.
+
+
+MAX_MESSAGE_LEN = 2000
+
+
+def _chat_response(request, thread, mark_read=True):
+    """Suhbat javobining yagona shakli — barcha chat endpointlari shuni qaytaradi."""
+    if mark_read:
+        # Menga yozilgan o'qilmagan xabarlarni "o'qildi" deb belgilaymiz.
+        thread.messages.filter(read_at__isnull=True).exclude(
+            sender_id=request.user.id
+        ).update(read_at=timezone.now())
+
+    items = thread.messages.select_related('sender')
+    ctx = {'request': request}
+    return Response({
+        'thread': ChatThreadSerializer(thread, context=ctx).data,
+        'items': ChatMessageSerializer(items, many=True, context=ctx).data,
+    })
+
+
+def _post_message(request, thread):
+    """POST tanasidagi matnni tekshiradi va xabar yaratadi.
+
+    Xato bo'lsa Response qaytaradi, muvaffaqiyatda None.
+    """
+    text = str(request.data.get('text', '')).strip()
+    if not text:
+        return Response({'error': 'empty_text'}, status=status.HTTP_400_BAD_REQUEST)
+    if len(text) > MAX_MESSAGE_LEN:
+        return Response({'error': 'text_too_long'}, status=status.HTTP_400_BAD_REQUEST)
+    ChatMessage.objects.create(thread=thread, sender=request.user, text=text)
+    thread.touch()
+    return None
+
 
 @api_view(['GET', 'POST'])
 @permission_classes([IsAuthenticated])
 def listing_chat_view(request, pk):
     """Xaridor ↔ e'lon egasi suhbati. Kim yozsa ham shu ikkovi orasidagi thread ishlaydi."""
-    listing = Listing.objects.filter(pk=pk).first()
+    listing = Listing.objects.select_related('owner').filter(pk=pk).first()
     if not listing:
         return Response({'error': 'not_found'}, status=status.HTTP_404_NOT_FOUND)
 
     user = request.user
-    buyer = listing.owner if user.id == listing.owner_id else user
-    # Agar egasi o'zi ochsa va query orqali buyer ko'rsatilmasa — barcha threadlar ro'yxati qaytadi.
-    if user.id == listing.owner_id and not request.query_params.get('with'):
-        threads = ChatThread.objects.filter(listing=listing).select_related('buyer')
-        return Response({'items': ChatThreadSerializer(threads, many=True).data})
+    is_owner = user.id == listing.owner_id
 
-    if user.id == listing.owner_id:
+    # E'lon egasi `with` ko'rsatmay ochsa — barcha suhbatlari ro'yxati qaytadi.
+    if is_owner and not request.query_params.get('with'):
+        threads = (
+            ChatThread.objects.filter(listing=listing)
+            .select_related('buyer', 'listing', 'listing__owner')
+            .order_by('-updated_at')
+        )
+        return Response({
+            'items': ChatThreadSerializer(threads, many=True, context={'request': request}).data
+        })
+
+    if is_owner:
         from accounts.models import User
+
         buyer = User.objects.filter(pk=request.query_params.get('with')).first()
         if not buyer:
             return Response({'error': 'buyer_not_found'}, status=status.HTTP_404_NOT_FOUND)
+        if buyer.id == listing.owner_id:
+            return Response({'error': 'own_listing'}, status=status.HTTP_400_BAD_REQUEST)
+    else:
+        buyer = user
 
-    thread, _ = ChatThread.objects.get_or_create(listing=listing, buyer=buyer)
+    thread, _ = ChatThread.objects.get_or_create(
+        listing=listing, buyer=buyer, defaults={'recipient': listing.owner}
+    )
+    # Eski (migratsiyadan oldingi) suhbatlarda `recipient` bo'sh bo'lishi mumkin.
+    if thread.recipient_id is None:
+        thread.recipient = listing.owner
+        thread.save(update_fields=['recipient'])
 
     if request.method == 'POST':
-        text = str(request.data.get('text', '')).strip()
-        if not text:
-            return Response({'error': 'empty_text'}, status=status.HTTP_400_BAD_REQUEST)
-        ChatMessage.objects.create(thread=thread, sender=user, text=text)
+        error = _post_message(request, thread)
+        if error is not None:
+            return error
 
-    items = ChatMessage.objects.filter(thread=thread).select_related('sender')
-    return Response({'items': ChatMessageSerializer(items, many=True).data})
+    return _chat_response(request, thread)
+
+
+@api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
+def direct_chat_view(request, pk):
+    """To'g'ridan-to'g'ri suhbat: /api/chats/direct/<user_id>.
+
+    "Agentlar" sahifasidagi "Bog'lanish" tugmasi shu yerga murojaat qiladi.
+    E'lon kerak emas — istalgan ikki foydalanuvchi yozisha oladi.
+    """
+    from accounts.models import User
+
+    peer = User.objects.filter(pk=pk, is_active=True).first()
+    if peer is None:
+        return Response({'error': 'user_not_found'}, status=status.HTTP_404_NOT_FOUND)
+    if peer.id == request.user.id:
+        return Response({'error': 'self_chat'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Tomonlar doim bir xil tartibda saqlanadi — aks holda A→B va B→A
+    # ikkita alohida suhbat yaratardi.
+    first, second = ChatThread.direct_pair(request.user, peer)
+    thread, _ = ChatThread.objects.get_or_create(
+        listing__isnull=True, buyer=first, recipient=second, defaults={'listing': None}
+    )
+
+    if request.method == 'POST':
+        error = _post_message(request, thread)
+        if error is not None:
+            return error
+
+    return _chat_response(request, thread)
+
+
+@api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
+def thread_detail_view(request, pk):
+    """Suhbatni ID bo'yicha ochish — chat ro'yxatidan bosilganda ishlatiladi."""
+    thread = (
+        ChatThread.objects.select_related('listing', 'listing__owner', 'buyer', 'recipient')
+        .filter(pk=pk)
+        .first()
+    )
+    if thread is None:
+        return Response({'error': 'not_found'}, status=status.HTTP_404_NOT_FOUND)
+    if not thread.has_access(request.user):
+        return Response({'error': 'forbidden'}, status=status.HTTP_403_FORBIDDEN)
+
+    if request.method == 'POST':
+        error = _post_message(request, thread)
+        if error is not None:
+            return error
+
+    return _chat_response(request, thread)
 
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def my_chats_view(request):
-    threads = ChatThread.objects.filter(
-        Q(buyer=request.user) | Q(listing__owner=request.user)
-    ).select_related('listing', 'buyer').distinct()
-    return Response({'items': ChatThreadSerializer(threads, many=True).data})
+    """Foydalanuvchining barcha suhbatlari — e'lon suhbatlari ham, to'g'ridan-to'g'ri ham."""
+    me = request.user
+    threads = (
+        ChatThread.objects.filter(
+            Q(buyer=me) | Q(recipient=me) | Q(listing__owner=me)
+        )
+        .select_related('listing', 'listing__owner', 'buyer', 'recipient')
+        .distinct()
+        .order_by('-updated_at')
+    )
+    ctx = {'request': request}
+    items = ChatThreadSerializer(threads, many=True, context=ctx).data
+    unread_total = sum(t.get('unread') or 0 for t in items)
+    return Response({'items': items, 'unreadTotal': unread_total})
 
 
 # ───────────────────────── shartnoma ─────────────────────────

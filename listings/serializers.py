@@ -57,22 +57,84 @@ class ChatMessageSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ChatMessage
-        fields = ['id', 'thread', 'sender', 'sender_name', 'text', 'created_at']
-        read_only_fields = ['id', 'thread', 'sender', 'sender_name', 'created_at']
+        fields = ['id', 'thread', 'sender', 'sender_name', 'text', 'created_at', 'read_at']
+        read_only_fields = ['id', 'thread', 'sender', 'sender_name', 'created_at', 'read_at']
 
 
 class ChatThreadSerializer(serializers.ModelSerializer):
-    listing_title = serializers.CharField(source='listing.address', read_only=True)
+    """Chat ro'yxatidagi bitta qator.
+
+    Muhim: ``peer_*`` maydonlari SO'ROV YUBORGAN foydalanuvchiga qarab
+    hisoblanadi — ya'ni har kim suhbatdoshining ismini ko'radi, o'zinikini
+    emas. Ilgari faqat ``buyer_name`` qaytardi va e'lon egasi o'z chat
+    ro'yxatida hamma joyda xaridorning ismini ko'rar, xaridor esa o'z
+    ismini ko'rardi.
+    """
+
+    listing_title = serializers.CharField(source='listing.address', read_only=True, default='')
+    listing_district = serializers.CharField(source='listing.district', read_only=True, default='')
     buyer_name = serializers.CharField(source='buyer.name', read_only=True)
+    kind = serializers.SerializerMethodField()
+    peer_id = serializers.SerializerMethodField()
+    peer_name = serializers.SerializerMethodField()
+    peer_role = serializers.SerializerMethodField()
+    peer_avatar = serializers.SerializerMethodField()
     last_message = serializers.SerializerMethodField()
+    unread = serializers.SerializerMethodField()
 
     class Meta:
         model = ChatThread
-        fields = ['id', 'listing', 'listing_title', 'buyer', 'buyer_name', 'created_at', 'last_message']
+        fields = [
+            'id', 'kind', 'listing', 'listing_title', 'listing_district',
+            'buyer', 'buyer_name', 'recipient',
+            'peer_id', 'peer_name', 'peer_role', 'peer_avatar',
+            'created_at', 'updated_at', 'last_message', 'unread',
+        ]
+
+    # ── suhbatdoshni aniqlash ────────────────────────────────────────────
+    def _me(self):
+        request = self.context.get('request')
+        return getattr(request, 'user', None)
+
+    def _peer(self, obj):
+        if not hasattr(obj, '_peer_cache'):
+            me = self._me()
+            obj._peer_cache = obj.other_party(me) if me and me.is_authenticated else obj.buyer
+        return obj._peer_cache
+
+    def get_kind(self, obj):
+        return 'listing' if obj.listing_id else 'direct'
+
+    def get_peer_id(self, obj):
+        peer = self._peer(obj)
+        return peer.id if peer else None
+
+    def get_peer_name(self, obj):
+        peer = self._peer(obj)
+        return peer.name if peer else ''
+
+    def get_peer_role(self, obj):
+        peer = self._peer(obj)
+        return peer.role if peer else ''
+
+    def get_peer_avatar(self, obj):
+        peer = self._peer(obj)
+        if not peer or not peer.avatar:
+            return None
+        request = self.context.get('request')
+        url = peer.avatar.url
+        return request.build_absolute_uri(url) if request else url
 
     def get_last_message(self, obj):
         msg = obj.messages.order_by('-created_at').first()
         return ChatMessageSerializer(msg).data if msg else None
+
+    def get_unread(self, obj):
+        """Menga yozilgan, hali o'qilmagan xabarlar soni."""
+        me = self._me()
+        if not me or not me.is_authenticated:
+            return 0
+        return obj.messages.filter(read_at__isnull=True).exclude(sender_id=me.id).count()
 
 
 class ContractSerializer(serializers.ModelSerializer):

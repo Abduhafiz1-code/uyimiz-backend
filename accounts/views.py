@@ -23,6 +23,7 @@ from .models import CertificationStatus, OTPPurpose, PhoneOTP, Role, User, norma
 from .serializers import (
     AdminUserSerializer,
     AgentApplySerializer,
+    AgentPublicSerializer,
     AgentSerializer,
     AvatarSerializer,
     PasswordLoginSerializer,
@@ -382,3 +383,101 @@ def phone_change_confirm_view(request):
 def logout_view(request):
     Token.objects.filter(user=request.user).delete()
     return Response({'ok': True})
+
+
+# ───────────────────────── ommaviy agentlar katalogi ─────────────────────────
+#
+# Sayt va mobil ilovadagi "Agentlar" bo'limi shu ikki endpointdan oziqlanadi.
+# Ilgari bu ro'yxat frontendda qo'lda yozilgan (mock) edi — shuning uchun
+# haqiqiy agentlar ko'rinmasdi. Endi bitta manba: baza.
+#
+# ⚠️ Ro'yxatga FAQAT admin tasdiqlagan, faol agentlar tushadi. Ariza
+# topshirgan ("Kutilmoqda") agent hali ko'rinmaydi.
+
+def _public_agents_qs():
+    from django.db.models import Count, Q as DQ
+
+    return (
+        User.objects.filter(
+            role=Role.AGENT,
+            certification=CertificationStatus.TASDIQLANGAN,
+            is_active=True,
+        )
+        .annotate(
+            active_listings=Count(
+                'agent_listings', filter=DQ(agent_listings__status='active'), distinct=True
+            )
+        )
+    )
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def agents_list_view(request):
+    """Tasdiqlangan agentlar ro'yxati.
+
+    Query parametrlari:
+      ``district`` — tuman bo'yicha filtr
+      ``q``        — ism yoki tuman bo'yicha qidiruv
+      ``sort``     — ``rating`` (sukut) | ``deals`` | ``new``
+      ``page``, ``perPage`` — sahifalash
+    """
+    qs = _public_agents_qs()
+
+    district = (request.query_params.get('district') or '').strip()
+    if district:
+        qs = qs.filter(district__iexact=district)
+
+    q = (request.query_params.get('q') or '').strip()
+    if q:
+        from django.db.models import Q as DQ
+
+        qs = qs.filter(DQ(name__icontains=q) | DQ(district__icontains=q))
+
+    sort = request.query_params.get('sort') or 'rating'
+    order = {
+        'rating': ['-rating', '-total_deals'],
+        'deals': ['-total_deals', '-rating'],
+        'new': ['-date_joined'],
+    }.get(sort, ['-rating', '-total_deals'])
+    qs = qs.order_by(*order)
+
+    try:
+        page = max(1, int(request.query_params.get('page', 1)))
+        per_page = min(60, max(1, int(request.query_params.get('perPage', 24))))
+    except (TypeError, ValueError):
+        page, per_page = 1, 24
+
+    total = qs.count()
+    start = (page - 1) * per_page
+    items = qs[start:start + per_page]
+
+    return Response({
+        'items': AgentPublicSerializer(items, many=True, context={'request': request}).data,
+        'total': total,
+        'page': page,
+        'perPage': per_page,
+        'pageCount': max(1, -(-total // per_page)),
+    })
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def agent_detail_view(request, pk):
+    """Bitta agent + uning faol e'lonlari."""
+    agent = _public_agents_qs().filter(pk=pk).first()
+    if agent is None:
+        return Response({'error': 'not_found'}, status=status.HTTP_404_NOT_FOUND)
+
+    from listings.models import Listing
+    from listings.serializers import ListingSerializer
+
+    listings = (
+        Listing.objects.filter(agent=agent, status='active')
+        .prefetch_related('photos')
+        .order_by('-created_at')[:12]
+    )
+
+    data = AgentPublicSerializer(agent, context={'request': request}).data
+    data['listings'] = ListingSerializer(listings, many=True, context={'request': request}).data
+    return Response(data)

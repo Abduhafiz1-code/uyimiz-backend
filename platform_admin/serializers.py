@@ -1,3 +1,4 @@
+from django.utils.crypto import get_random_string
 from rest_framework import serializers
 
 from accounts.models import AdminTitle, CertificationStatus, Role, User
@@ -92,7 +93,11 @@ class AdminAccountSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'date_joined']
 
     def create(self, validated_data):
-        password = validated_data.pop('password', None) or User.objects.make_random_password()
+        # Diqqat: `User.objects.make_random_password()` Django 5.1 da BUTUNLAY
+        # olib tashlangan (4.2 da eskirgan deb belgilangan edi). Loyiha
+        # Django 5.1.5 da ishlaydi, shuning uchun parol berilmagan holatda
+        # admin yaratish AttributeError bilan 500 qaytarardi.
+        password = validated_data.pop('password', None) or get_random_string(14)
         validated_data['role'] = Role.ADMIN
         validated_data.setdefault('admin_title', AdminTitle.ADMIN)
         user = User(**validated_data)

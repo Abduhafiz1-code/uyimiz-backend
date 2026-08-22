@@ -113,6 +113,38 @@ DATABASES = {
     )
 }
 
+# ⚠️ PROD'DA SQLITE = MA'LUMOT YO'QOLISHI.
+#
+# Render/Fly konteynerining diski vaqtinchalik: servis qayta ishga
+# tushganda (deploy, bepul tarifdagi "uyqu", yoki oddiy restart) sqlite
+# fayli yangisiga almashadi. Natijada BARCHA foydalanuvchi, token va
+# e'lon o'chadi — ilova esa buni "token eskirdi" deb tushunib, odamdan
+# qaytadan ro'yxatdan o'tishni so'raydi.
+#
+# Shu sababli DEBUG=0 rejimida sqlite aniqlansa, ishga tushish paytida
+# baland ovozda ogohlantiramiz va /api/health ni "error" holatiga
+# o'tkazamiz (health tekshiruvi settings.DATABASES ni o'qiydi).
+DB_IS_EPHEMERAL_SQLITE = (
+    not DEBUG and DATABASES['default']['ENGINE'].endswith('sqlite3')
+)
+if DB_IS_EPHEMERAL_SQLITE:
+    import sys
+
+    print(
+        '\n'
+        '!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n'
+        '!!!  DATABASE_URL berilmagan — vaqtinchalik SQLITE ishlatilmoqda.\n'
+        '!!!  Servis qayta ishga tushganda BARCHA MA\'LUMOT O\'CHADI:\n'
+        '!!!  foydalanuvchilar, tokenlar, e\'lonlar, shartnomalar.\n'
+        '!!!  Foydalanuvchilar "qaytadan ro\'yxatdan o\'ting" xabarini oladi.\n'
+        '!!!\n'
+        '!!!  Yechim: Render → Environment → DATABASE_URL ga Postgres\n'
+        '!!!  ulanish satrini qo\'ying (RENDER-POSTGRES.md ga qarang).\n'
+        '!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n',
+        file=sys.stderr,
+        flush=True,
+    )
+
 AUTH_USER_MODEL = 'accounts.User'
 AUTHENTICATION_BACKENDS = [
     'accounts.backends.PhoneBackend',

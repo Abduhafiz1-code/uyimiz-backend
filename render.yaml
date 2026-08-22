@@ -2,6 +2,13 @@
 # Dashboard → Blueprints → New Blueprint Instance → shu repo'ni tanlang.
 # Yoki servis allaqachon yaratilgan bo'lsa, quyidagi qiymatlarni
 # Settings/Environment bo'limiga qo'lda kiriting.
+#
+# ⚠️ ENG MUHIMI — DATABASE_URL.
+# Hozirgi jonli servisda u BERILMAGAN va shuning uchun sqlite ishlamoqda.
+# Konteyner har qayta ishga tushganda sqlite fayli yo'qoladi: foydalanuvchi
+# ro'yxatdan o'tadi, bir necha daqiqadan keyin hisobi bilan birga tokeni
+# ham o'chib ketadi va ilova "qaytadan ro'yxatdan o'ting" deydi.
+# To'liq ko'rsatma: RENDER-POSTGRES.md
 
 databases:
   - name: uyimiz-db
@@ -63,8 +70,11 @@ services:
       # ── CORS: frontend domenlaringizni yozing ──
       - key: CORS_ALLOW_ALL
         value: "0"
+      # Vercel'dagi uch frontend + kelajakdagi o'z domeningiz.
+      # (Har qanday *.vercel.app manzili settings.py'dagi regex orqali
+      # ham o'tadi, lekin asosiylarini aniq yozib qo'yish tushunarliroq.)
       - key: CORS_ALLOWED_ORIGINS
-        value: https://uyimiz.uz,https://admin.uyimiz.uz
+        value: https://uyimiz-uz-desktop.vercel.app,https://uyimiz-uz-admin.vercel.app,https://uyimiz-uz-biznes.vercel.app,https://uyimiz.uz,https://admin.uyimiz.uz
 
       # ── Media (S3-mos object storage) ──
       # Qiymatlarni Dashboard → Environment → Secret sifatida kiriting.

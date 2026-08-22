@@ -27,6 +27,57 @@ class UserPublicSerializer(serializers.ModelSerializer):
         return request.build_absolute_uri(url) if request else url
 
 
+class AgentPublicSerializer(serializers.ModelSerializer):
+    """Ommaviy agentlar katalogi uchun (sayt va mobil ilovaning "Agentlar" bo'limi).
+
+    Faqat ADMIN TASDIQLAGAN agentlar shu serializer orqali ko'rsatiladi.
+    Telefon raqami ataylab qaytariladi — foydalanuvchi agentga qo'ng'iroq
+    qila olishi kerak; qolgan ichki maydonlar (komissiya, platforma ulushi)
+    bu yerda YO'Q, ular faqat CRM va admin panelga tegishli.
+    """
+
+    initials = serializers.CharField(read_only=True)
+    avatar_url = serializers.SerializerMethodField()
+    deals = serializers.IntegerField(source='total_deals', read_only=True)
+    years = serializers.SerializerMethodField()
+    top = serializers.SerializerMethodField()
+    listings_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = [
+            'id', 'name', 'phone', 'district', 'initials', 'avatar_url',
+            'rating', 'rating_count', 'tier', 'deals', 'years', 'top',
+            'avg_response_minutes', 'listings_count', 'date_joined',
+        ]
+
+    def get_avatar_url(self, obj):
+        if not obj.avatar:
+            return None
+        request = self.context.get('request')
+        url = obj.avatar.url
+        return request.build_absolute_uri(url) if request else url
+
+    def get_years(self, obj):
+        """Platformada necha yildan beri — ro'yxatdan o'tgan sanadan hisoblanadi."""
+        from django.utils import timezone
+
+        if not obj.date_joined:
+            return 0
+        days = (timezone.now() - obj.date_joined).days
+        return max(0, days // 365)
+
+    def get_top(self, obj):
+        return obj.tier in ('Tajribali', 'Top')
+
+    def get_listings_count(self, obj):
+        # `annotate` bilan kelgan bo'lsa qo'shimcha so'rov qilinmaydi.
+        value = getattr(obj, 'active_listings', None)
+        if value is not None:
+            return value
+        return obj.agent_listings.filter(status='active').count()
+
+
 class AgentSerializer(serializers.ModelSerializer):
     """Agent CRM uchun — reyting, daraja, sertifikat holati bilan."""
 

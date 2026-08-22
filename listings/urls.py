@@ -17,6 +17,13 @@ urlpatterns = [
     path('me/chats', views.my_chats_view, name='my-chats'),
     path('me/chats/', views.my_chats_view),
 
+    # To'g'ridan-to'g'ri suhbat (e'lonsiz) — "Agentlar" sahifasidagi
+    # "Bog'lanish" tugmasi shu manzilga murojaat qiladi.
+    path('chats/direct/<int:pk>', views.direct_chat_view, name='direct-chat'),
+    path('chats/direct/<int:pk>/', views.direct_chat_view),
+    path('chats/<int:pk>', views.thread_detail_view, name='chat-thread'),
+    path('chats/<int:pk>/', views.thread_detail_view),
+
     path('listings/<int:pk>/contract', views.create_contract_view, name='create-contract'),
     path('listings/<int:pk>/contract/', views.create_contract_view),
     path('contracts/<int:pk>/approve', views.approve_contract_view, name='approve-contract'),

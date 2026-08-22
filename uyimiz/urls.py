@@ -51,8 +51,12 @@ def health(request):
     if engine == 'sqlite3':
         problems.append(
             'DATABASE_URL berilmagan — vaqtinchalik sqlite ishlatilmoqda, '
-            'server qayta ishga tushganda hamma ma\'lumot o\'chadi.'
+            'server qayta ishga tushganda hamma ma\'lumot o\'chadi '
+            '(foydalanuvchilar "qaytadan ro\'yxatdan o\'ting" xabarini oladi).'
         )
+        # Lokal ishlab chiqishda bu normal; prod'da esa bu ochiq nosozlik.
+        if not st.DEBUG:
+            info['fatal'] = 'ephemeral_database'
 
     # 2) Migratsiyalar bajarilganmi
     if info.get('databaseConnected'):
@@ -81,7 +85,9 @@ def health(request):
             problems.append('CORS_ALLOW_ALL=1 — barcha saytlarga ochiq.')
 
     info['problems'] = problems
-    if any('ulanib bo\'lmadi' in p or 'migratsiya bajarilmagan' in p for p in problems):
+    if info.get('fatal') or any(
+        'ulanib bo\'lmadi' in p or 'migratsiya bajarilmagan' in p for p in problems
+    ):
         info['status'] = 'error'
     elif problems:
         info['status'] = 'warning'
@@ -94,6 +100,8 @@ urlpatterns = [
     path('api/health', health),
 
     path('api/auth/', include('accounts.urls')),
+    # Ochiq agentlar katalogi: /api/agents, /api/agents/<id>
+    path('api/', include('accounts.public_urls')),
     path('api/', include('core.urls')),
     path('api/', include('listings.urls')),
     path('api/crm/', include('crm.urls')),

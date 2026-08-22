@@ -139,17 +139,87 @@ class Favorite(models.Model):
 
 
 class ChatThread(models.Model):
-    """Bitta e'lon bo'yicha bitta xaridor ↔ egasi suhbati (2.2-band: "Chat va aloqa")."""
+    """Ikki kishi orasidagi suhbat (2.2-band: "Chat va aloqa").
 
-    listing = models.ForeignKey(Listing, on_delete=models.CASCADE, related_name='chat_threads')
+    Ikki xil suhbat bir xil jadvalda saqlanadi:
+
+    * **E'lon suhbati** — ``listing`` to'ldirilgan. Ikkinchi tomon e'lon
+      egasi (``listing.owner``). Eski xatti-harakat butunlay saqlangan.
+    * **To'g'ridan-to'g'ri suhbat** — ``listing`` bo'sh (NULL), ikkinchi
+      tomon esa ``recipient``. Aynan shu tur "Agentlar" sahifasidagi
+      "Bog'lanish" tugmasi uchun kerak: u yerda hech qanday e'lon yo'q,
+      foydalanuvchi shunchaki agentga yozmoqchi.
+
+    ``buyer`` — suhbatni BOSHLAGAN tomon (nomi tarixiy sabablarga ko'ra
+    shunday qolgan), ``recipient`` — ikkinchi tomon. E'lon suhbatlarida
+    ``recipient`` migratsiya paytida ``listing.owner`` bilan to'ldiriladi.
+    """
+
+    listing = models.ForeignKey(
+        Listing, on_delete=models.CASCADE, related_name='chat_threads', null=True, blank=True
+    )
     buyer = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='chat_threads')
+    recipient = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
+        related_name='chat_threads_received', null=True, blank=True,
+    )
     created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(default=timezone.now, db_index=True)
 
     class Meta:
-        unique_together = ['listing', 'buyer']
+        ordering = ['-updated_at']
+        constraints = [
+            # E'lon suhbati: bitta e'lon + bitta xaridor = bitta suhbat.
+            models.UniqueConstraint(
+                fields=['listing', 'buyer'],
+                condition=models.Q(listing__isnull=False),
+                name='uniq_listing_thread',
+            ),
+            # To'g'ridan-to'g'ri suhbat: ikki kishi orasida bitta suhbat.
+            # (Tomonlar `direct_pair` yordamida doim bir xil tartibda saqlanadi.)
+            models.UniqueConstraint(
+                fields=['buyer', 'recipient'],
+                condition=models.Q(listing__isnull=True),
+                name='uniq_direct_thread',
+            ),
+        ]
 
     def __str__(self):
-        return f'{self.listing_id} ↔ {self.buyer_id}'
+        if self.listing_id:
+            return f'e\'lon {self.listing_id} ↔ {self.buyer_id}'
+        return f'{self.buyer_id} ↔ {self.recipient_id}'
+
+    @staticmethod
+    def direct_pair(user_a, user_b):
+        """Ikki foydalanuvchini doimo bir xil tartibda qaytaradi.
+
+        Shu tufayli A→B va B→A bir xil suhbatni topadi, ikkita nusxa
+        yaratilmaydi.
+        """
+        a, b = (user_a, user_b) if user_a.id <= user_b.id else (user_b, user_a)
+        return a, b
+
+    def other_party(self, user):
+        """Berilgan foydalanuvchi uchun suhbatdoshni qaytaradi."""
+        if self.listing_id and self.recipient_id is None:
+            other_id = self.listing.owner_id
+        else:
+            other_id = self.recipient_id
+        if user is not None and getattr(user, 'id', None) == other_id:
+            return self.buyer
+        return self.recipient or (self.listing.owner if self.listing_id else None)
+
+    def has_access(self, user):
+        if not user or not user.is_authenticated:
+            return False
+        allowed = {self.buyer_id, self.recipient_id}
+        if self.listing_id:
+            allowed.add(self.listing.owner_id)
+        return user.id in allowed
+
+    def touch(self):
+        self.updated_at = timezone.now()
+        self.save(update_fields=['updated_at'])
 
 
 class ChatMessage(models.Model):
@@ -157,6 +227,9 @@ class ChatMessage(models.Model):
     sender = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='+')
     text = models.CharField(max_length=2000)
     created_at = models.DateTimeField(default=timezone.now)
+    #: Suhbatdosh xabarni ochib ko'rgan payt. NULL = o'qilmagan
+    #: (chat ro'yxatidagi "yangi xabar" belgisi shunga tayanadi).
+    read_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ['created_at']
